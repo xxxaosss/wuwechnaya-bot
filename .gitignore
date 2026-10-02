@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+*-secrets.yaml
+*-secret.yaml
+
+# Local configs
+kubeconfig*
+.kube/
+
+# Node (для web-admin)
+node_modules/
+dist/
+build/
+
+# OS / IDE
+.DS_Store
+.vscode/
+.idea/
+
+# Docker
+*.log

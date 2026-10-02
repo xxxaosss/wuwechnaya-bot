@@ -1,0 +1,35 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "FastAPI (uvicorn)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": [
+        "main:app",
+        "--reload",
+        "--host", "127.0.0.1",
+        "--port", "8000"
+      ],
+      "cwd": "${workspaceFolder}/backend",
+      "env": {
+        "DATABASE_URL": "postgresql+asyncpg://xxxaosss:msSc37pe@127.0.0.1:5432/db_wu"
+      },
+      "justMyCode": false
+    },
+    {
+      "name": "Bot-gateway",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/bot-gateway/app.py",
+      "cwd": "${workspaceFolder}/bot-gateway",
+      "env": {
+        "BOT_TOKEN": "8651307790:AAEfOWljS9Yf-3q7zaOpYkfGsBhPizTVYro",
+        "ADMIN_TELEGRAM_ID": "47319573",
+        "BACKEND_URL": "http://127.0.0.1:8000"
+      },
+      "justMyCode": false
+    }
+  ]
+}
