@@ -17,14 +17,14 @@ dp = Dispatcher()
 @dp.message(Command("start"))
 async def start_handler(message: types.Message):
     async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            f"{BACKEND_URL}/auth/request-access",
-            params={
-                "telegram_id": message.from_user.id,
-                "username": message.from_user.username,
-            },
-        )
-        data = resp.json()
+    resp = await client.post(f"{BACKEND_URL}/auth/request-access", params={
+        "telegram_id": message.from_user.id,
+        "username": message.from_user.username
+    })
+    if resp.status_code != 200:
+        await message.answer(f"Ошибка backend: {resp.status_code}")
+        return
+    data = resp.json()
 
     if data["status"] == "pending":
         await message.answer(
