@@ -1,8 +1,6 @@
-# bot-gateway/app.py
 import asyncio
-import os
-
 import httpx
+import os
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 
@@ -17,23 +15,21 @@ dp = Dispatcher()
 @dp.message(Command("start"))
 async def start_handler(message: types.Message):
     async with httpx.AsyncClient() as client:
-    resp = await client.post(f"{BACKEND_URL}/auth/request-access", params={
-        "telegram_id": message.from_user.id,
-        "username": message.from_user.username
-    })
-    if resp.status_code != 200:
-        await message.answer(f"Ошибка backend: {resp.status_code}")
-        return
-    data = resp.json()
+        resp = await client.post(f"{BACKEND_URL}/auth/request-access", params={
+            "telegram_id": message.from_user.id,
+            "username": message.from_user.username
+        })
+        if resp.status_code != 200:
+            await message.answer(f"Ошибка backend: {resp.status_code}")
+            return
+        data = resp.json()
 
     if data["status"] == "pending":
-        await message.answer(
-            "Заявка на доступ отправлена администратору. Ожидай подтверждения."
-        )
+        await message.answer("Заявка на доступ отправлена администратору. Ожидай подтверждения.")
         await bot.send_message(
             ADMIN_TELEGRAM_ID,
             f"Новая заявка: @{message.from_user.username} (id {message.from_user.id})\n"
-            f"Подтвердить: /approve {message.from_user.id} master",
+            f"Подтвердить: /approve {message.from_user.id} master"
         )
     else:
         await message.answer(f"Твоя роль: {data['status']}")
@@ -46,14 +42,12 @@ async def approve_handler(message: types.Message):
     parts = message.text.split()
     telegram_id, role = int(parts[1]), parts[2]
     async with httpx.AsyncClient() as client:
-        await client.post(
-            f"{BACKEND_URL}/auth/approve",
-            params={
-                "telegram_id": telegram_id,
-                "role": role,
-                "admin_id": message.from_user.id,
-            },
-        )
+        resp = await client.post(f"{BACKEND_URL}/auth/approve", params={
+            "telegram_id": telegram_id, "role": role, "admin_id": message.from_user.id
+        })
+        if resp.status_code != 200:
+            await message.answer(f"Ошибка backend: {resp.status_code}")
+            return
     await message.answer(f"Пользователь {telegram_id} получил роль {role}")
     await bot.send_message(telegram_id, f"Доступ подтверждён! Твоя роль: {role}")
 
