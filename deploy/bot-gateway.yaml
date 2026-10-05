@@ -15,6 +15,7 @@ spec:
       containers:
         - name: bot-gateway
           image: ghcr.io/xxxaosss/bot-gateway:latest
+          imagePullPolicy: Always
           envFrom:
             - secretRef:
                 name: bot-secrets

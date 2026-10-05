@@ -1,11 +1,6 @@
-# backend/auth/models.py
+from sqlalchemy import Column, Integer, BigInteger, String, DateTime
 from datetime import datetime
-
-from sqlalchemy import BigInteger, Column, DateTime, Integer, String
-from sqlalchemy.orm import declarative_base
-
-Base = declarative_base()
-
+from db import Base
 
 class User(Base):
     __tablename__ = "users"

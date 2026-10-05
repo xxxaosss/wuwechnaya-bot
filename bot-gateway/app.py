@@ -4,12 +4,15 @@ import os
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 
+from inventory_handlers import router as inventory_router
+
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 BACKEND_URL = os.environ.get("BACKEND_URL", "http://backend:8000")
 ADMIN_TELEGRAM_ID = int(os.environ["ADMIN_TELEGRAM_ID"])
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
+dp.include_router(inventory_router)
 
 
 @dp.message(Command("start"))
@@ -32,7 +35,7 @@ async def start_handler(message: types.Message):
             f"Подтвердить: /approve {message.from_user.id} master"
         )
     else:
-        await message.answer(f"Твоя роль: {data['status']}")
+        await message.answer(f"Твоя роль: {data['status']}\n\nКоманды: /stock /receive /use")
 
 
 @dp.message(Command("approve"))
@@ -53,7 +56,7 @@ async def approve_handler(message: types.Message):
 
 
 async def main():
-    await dp.start_polling(bot)
+    await dp.start_polling(bot, backend_url=BACKEND_URL)
 
 
 if __name__ == "__main__":
