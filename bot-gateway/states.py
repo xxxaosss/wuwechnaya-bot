@@ -11,3 +11,13 @@ class ReceiveStates(StatesGroup):
 class UseStates(StatesGroup):
     choosing_consumable = State()
     entering_quantity = State()
+
+
+class WorkLogStates(StatesGroup):
+    choosing_service = State()
+    entering_new_service_name = State()
+    entering_new_service_price = State()
+    choosing_consumables = State()
+    entering_consumable_quantity = State()
+    entering_client_name = State()
+    entering_cost = State()

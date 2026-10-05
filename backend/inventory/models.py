@@ -35,4 +35,5 @@ class ConsumableUsage(Base):
     consumable_id = Column(Integer, ForeignKey("inventory.consumables.id"), nullable=False)
     quantity = Column(Numeric(10, 2), nullable=False)
     used_by = Column(BigInteger, nullable=False)
+    work_log_id = Column(Integer, ForeignKey("worklog.work_logs.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)

@@ -1,4 +1,4 @@
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import ReplyKeyboardMarkup
 from aiogram.utils.keyboard import ReplyKeyboardBuilder
 
 
@@ -7,7 +7,8 @@ def staff_menu() -> ReplyKeyboardMarkup:
     builder.button(text="📦 Остатки")
     builder.button(text="➕ Приход")
     builder.button(text="➖ Списать")
-    builder.adjust(2, 1)
+    builder.button(text="💼 Провести работу")
+    builder.adjust(2, 2)
     return builder.as_markup(resize_keyboard=True)
 
 

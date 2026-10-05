@@ -5,6 +5,7 @@ import httpx
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from inventory_handlers import router as inventory_router
+from worklog_handlers import router as worklog_router
 from main_menu import pending_menu, staff_menu
 
 BOT_TOKEN = os.environ["BOT_TOKEN"]
@@ -14,6 +15,7 @@ ADMIN_TELEGRAM_ID = int(os.environ["ADMIN_TELEGRAM_ID"])
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 dp.include_router(inventory_router)
+dp.include_router(worklog_router)
 
 
 @dp.message(Command("start"))
