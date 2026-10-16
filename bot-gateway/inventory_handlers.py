@@ -1,12 +1,16 @@
 import httpx
-from aiogram import F, Router, types
+from aiogram import Router, types, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
-from auth_helper import require_staff
-from keyboards import cancel_keyboard, consumables_keyboard
+
 from states import ReceiveStates, UseStates
+from keyboards import consumables_keyboard, cancel_keyboard, kind_keyboard, mode_keyboard
+from auth_helper import require_staff
+from fmt import fmt_stock, parse_number
 
 router = Router()
+
+NO_ACCESS = "Доступ только для мастеров и администраторов."
 
 
 async def fetch_consumables(backend_url: str) -> list[dict]:
@@ -15,44 +19,34 @@ async def fetch_consumables(backend_url: str) -> list[dict]:
         return resp.json() if resp.status_code == 200 else []
 
 
+# ---------------- Остатки ----------------
+
 @router.message(F.text == "📦 Остатки")
-async def stock_button(message: types.Message, backend_url: str):
-    await stock_handler(message, backend_url)
-
-
-@router.message(F.text == "➕ Приход")
-async def receive_button(message: types.Message, state: FSMContext, backend_url: str):
-    await receive_start(message, state, backend_url)
-
-
-@router.message(F.text == "➖ Списать")
-async def use_button(message: types.Message, state: FSMContext, backend_url: str):
-    await use_start(message, state, backend_url)
-
-
 @router.message(Command("stock"))
 async def stock_handler(message: types.Message, backend_url: str):
     if not await require_staff(backend_url, message.from_user.id):
-        await message.answer("Доступ только для мастеров и администраторов.")
+        await message.answer(NO_ACCESS)
         return
 
     consumables = await fetch_consumables(backend_url)
     if not consumables:
-        await message.answer("Расходников пока нет. Добавь через /receive.")
+        await message.answer("Расходников пока нет. Добавь через «➕ Приход».")
         return
 
-    lines = [
-        f"• {c['name']}: {c['quantity']} {c['unit']}"
-        + (" ⚠️ заканчивается" if c["quantity"] <= c["threshold"] else "")
-        for c in consumables
-    ]
+    lines = []
+    for c in consumables:
+        flag = " ⚠️ заканчивается" if c["quantity"] <= c["threshold"] else ""
+        lines.append(f"• {c['name']}: {fmt_stock(c)}{flag}")
     await message.answer("Текущие остатки:\n" + "\n".join(lines))
 
 
+# ---------------- Приход ----------------
+
+@router.message(F.text == "➕ Приход")
 @router.message(Command("receive"))
 async def receive_start(message: types.Message, state: FSMContext, backend_url: str):
     if not await require_staff(backend_url, message.from_user.id):
-        await message.answer("Доступ только для мастеров и администраторов.")
+        await message.answer(NO_ACCESS)
         return
 
     consumables = await fetch_consumables(backend_url)
@@ -71,69 +65,80 @@ async def receive_new_name(callback: types.CallbackQuery, state: FSMContext):
 
 
 @router.message(ReceiveStates.entering_new_name)
-async def receive_new_name_entered(
-    message: types.Message, state: FSMContext, backend_url: str
-):
+async def receive_new_name_entered(message: types.Message, state: FSMContext):
+    await state.update_data(new_name=message.text.strip())
+    await state.set_state(ReceiveStates.choosing_new_kind)
+    await message.answer("Как учитываем этот расходник?", reply_markup=kind_keyboard())
+
+
+async def create_and_continue(message: types.Message, state: FSMContext, backend_url: str,
+                              name: str, unit: str, pack_size):
     async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            f"{backend_url}/inventory/consumables",
-            json={"name": message.text, "unit": "шт", "threshold": 0},
-        )
+        resp = await client.post(f"{backend_url}/inventory/consumables", json={
+            "name": name, "unit": unit, "pack_size": pack_size,
+        })
     if resp.status_code != 200:
         await message.answer(f"Ошибка backend: {resp.status_code}")
         await state.clear()
         return
 
     consumable = resp.json()
-    await state.update_data(
-        consumable_id=consumable["id"], consumable_name=consumable["name"]
+    await state.update_data(consumable_id=consumable["id"])
+    await state.set_state(ReceiveStates.entering_pieces)
+    await message.answer(f"«{name}» добавлен. Сколько штук пришло?", reply_markup=cancel_keyboard())
+
+
+@router.callback_query(F.data.startswith("kind:"), ReceiveStates.choosing_new_kind)
+async def receive_kind_chosen(callback: types.CallbackQuery, state: FSMContext, backend_url: str):
+    kind = callback.data.split(":")[1]
+    data = await state.get_data()
+    await callback.answer()
+
+    if kind == "pieces":
+        await create_and_continue(callback.message, state, backend_url, data["new_name"], "шт", None)
+        return
+
+    unit = "мл" if kind == "ml" else "г"
+    await state.update_data(new_unit=unit)
+    await state.set_state(ReceiveStates.entering_pack_size)
+    await callback.message.answer(
+        f"Сколько {unit} в одной штуке? (например, 1000)", reply_markup=cancel_keyboard()
     )
-    await state.set_state(ReceiveStates.entering_quantity)
-    await message.answer(
-        f"Сколько {consumable['unit']} пришло?", reply_markup=cancel_keyboard()
-    )
+
+
+@router.message(ReceiveStates.entering_pack_size)
+async def receive_pack_size_entered(message: types.Message, state: FSMContext, backend_url: str):
+    pack_size = parse_number(message.text)
+    if pack_size is None:
+        await message.answer("Введи число больше нуля, например: 1000")
+        return
+    data = await state.get_data()
+    await create_and_continue(message, state, backend_url, data["new_name"], data["new_unit"], pack_size)
 
 
 @router.callback_query(F.data.startswith("receive:"), ReceiveStates.choosing_consumable)
 async def receive_choose(callback: types.CallbackQuery, state: FSMContext):
     consumable_id = int(callback.data.split(":")[1])
     await state.update_data(consumable_id=consumable_id)
-    await state.set_state(ReceiveStates.entering_quantity)
-    await callback.message.answer(
-        "Сколько пришло? (введи число)", reply_markup=cancel_keyboard()
-    )
+    await state.set_state(ReceiveStates.entering_pieces)
+    await callback.message.answer("Сколько штук пришло?", reply_markup=cancel_keyboard())
     await callback.answer()
 
 
-@router.message(ReceiveStates.entering_quantity)
-async def receive_quantity_entered(message: types.Message, state: FSMContext):
-    try:
-        quantity = float(message.text.replace(",", "."))
-    except ValueError:
-        await message.answer("Введи число, например: 5 или 2.5")
+@router.message(ReceiveStates.entering_pieces)
+async def receive_pieces_entered(message: types.Message, state: FSMContext, backend_url: str):
+    pieces = parse_number(message.text)
+    if pieces is None:
+        await message.answer("Введи число больше нуля, например: 2")
         return
-    await state.update_data(quantity=quantity)
-    await state.set_state(ReceiveStates.entering_supplier)
-    await message.answer('От какого поставщика? (или напиши "-", если неважно)')
 
-
-@router.message(ReceiveStates.entering_supplier)
-async def receive_supplier_entered(
-    message: types.Message, state: FSMContext, backend_url: str
-):
     data = await state.get_data()
-    supplier = None if message.text.strip() == "-" else message.text
-
     async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            f"{backend_url}/inventory/receive",
-            json={
-                "consumable_id": data["consumable_id"],
-                "quantity": data["quantity"],
-                "supplier": supplier,
-                "telegram_id": message.from_user.id,
-            },
-        )
+        resp = await client.post(f"{backend_url}/inventory/receive", json={
+            "consumable_id": data["consumable_id"],
+            "pieces": pieces,
+            "telegram_id": message.from_user.id,
+        })
 
     await state.clear()
     if resp.status_code != 200:
@@ -141,15 +146,16 @@ async def receive_supplier_entered(
         return
 
     result = resp.json()
-    await message.answer(
-        f"Приход зафиксирован. Новый остаток: {result['new_quantity']}"
-    )
+    await message.answer(f"Приход зафиксирован ✅\n«{result['name']}»: теперь {fmt_stock(result)}")
 
 
+# ---------------- Списание ----------------
+
+@router.message(F.text == "➖ Списать")
 @router.message(Command("use"))
 async def use_start(message: types.Message, state: FSMContext, backend_url: str):
     if not await require_staff(backend_url, message.from_user.id):
-        await message.answer("Доступ только для мастеров и администраторов.")
+        await message.answer(NO_ACCESS)
         return
 
     consumables = await fetch_consumables(backend_url)
@@ -158,51 +164,72 @@ async def use_start(message: types.Message, state: FSMContext, backend_url: str)
         return
 
     await state.set_state(UseStates.choosing_consumable)
-    await message.answer(
-        "Какой расходник списать?",
-        reply_markup=consumables_keyboard(consumables, "use"),
-    )
+    await message.answer("Какой расходник списать?", reply_markup=consumables_keyboard(consumables, "use"))
 
 
 @router.callback_query(F.data.startswith("use:"), UseStates.choosing_consumable)
-async def use_choose(callback: types.CallbackQuery, state: FSMContext):
+async def use_choose(callback: types.CallbackQuery, state: FSMContext, backend_url: str):
     consumable_id = int(callback.data.split(":")[1])
-    await state.update_data(consumable_id=consumable_id)
-    await state.set_state(UseStates.entering_quantity)
-    await callback.message.answer(
-        "Сколько списать? (введи число)", reply_markup=cancel_keyboard()
-    )
+    consumables = await fetch_consumables(backend_url)
+    consumable = next((c for c in consumables if c["id"] == consumable_id), None)
+    if consumable is None:
+        await callback.answer("Расходник не найден", show_alert=True)
+        return
+
+    await state.update_data(consumable_id=consumable_id, unit=consumable["unit"])
+    header = f"«{consumable['name']}» — остаток {fmt_stock(consumable)}"
+
+    if consumable.get("pack_size"):
+        await state.set_state(UseStates.choosing_mode)
+        await callback.message.answer(
+            f"{header}\nВ чём списываем?", reply_markup=mode_keyboard(consumable["unit"])
+        )
+    else:
+        await state.update_data(mode="base")
+        await state.set_state(UseStates.entering_amount)
+        await callback.message.answer(
+            f"{header}\nСколько списать, {consumable['unit']}?", reply_markup=cancel_keyboard()
+        )
     await callback.answer()
 
 
-@router.message(UseStates.entering_quantity)
-async def use_quantity_entered(
-    message: types.Message, state: FSMContext, backend_url: str
-):
-    try:
-        quantity = float(message.text.replace(",", "."))
-    except ValueError:
-        await message.answer("Введи число, например: 1 или 0.5")
+@router.callback_query(F.data.startswith("qmode:"), UseStates.choosing_mode)
+async def use_mode_chosen(callback: types.CallbackQuery, state: FSMContext):
+    mode = callback.data.split(":")[1]
+    data = await state.get_data()
+    label = "штук" if mode == "pieces" else data["unit"]
+    await state.update_data(mode=mode)
+    await state.set_state(UseStates.entering_amount)
+    await callback.message.answer(f"Сколько списать, {label}?", reply_markup=cancel_keyboard())
+    await callback.answer()
+
+
+@router.message(UseStates.entering_amount)
+async def use_amount_entered(message: types.Message, state: FSMContext, backend_url: str):
+    amount = parse_number(message.text)
+    if amount is None:
+        await message.answer("Введи число больше нуля, например: 1 или 0.5")
         return
 
     data = await state.get_data()
     async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            f"{backend_url}/inventory/use",
-            json={
-                "consumable_id": data["consumable_id"],
-                "quantity": quantity,
-                "telegram_id": message.from_user.id,
-            },
-        )
+        resp = await client.post(f"{backend_url}/inventory/use", json={
+            "consumable_id": data["consumable_id"],
+            "amount": amount,
+            "mode": data["mode"],
+            "telegram_id": message.from_user.id,
+        })
 
     await state.clear()
+    if resp.status_code == 400:
+        await message.answer("Недостаточно остатка для такого списания.")
+        return
     if resp.status_code != 200:
         await message.answer(f"Ошибка backend: {resp.status_code}")
         return
 
     result = resp.json()
-    text = f"Списано. Остаток «{result['name']}»: {result['new_quantity']}"
+    text = f"Списано ✅ Остаток «{result['name']}»: {fmt_stock(result)}"
     if result["low_stock"]:
         text += "\n⚠️ Остаток ниже порога — пора закупить!"
     await message.answer(text)

@@ -6,6 +6,7 @@ from db import get_session
 from .models import Service, WorkLog
 from .schemas import ServiceOut, ServiceCreate, WorkLogCreate
 from inventory.models import Consumable, ConsumableUsage
+from inventory.units import to_base
 
 router = APIRouter(prefix="/worklog", tags=["worklog"])
 
@@ -31,16 +32,16 @@ async def complete_work(data: WorkLogCreate, session: AsyncSession = Depends(get
     if not service:
         raise HTTPException(404, "Service not found")
 
-    # Проверяем остатки ДО любых изменений — чтобы не списать часть и упасть на середине
-    consumables_map = {}
+    # Сначала проверяем остатки по всем расходникам — до любых изменений
+    planned = []
     for item in data.consumables:
         consumable = await session.get(Consumable, item.consumable_id)
         if not consumable:
             raise HTTPException(404, f"Consumable {item.consumable_id} not found")
-        qty = Decimal(str(item.quantity))
+        qty = to_base(consumable, Decimal(str(item.amount)), item.mode)
         if consumable.quantity < qty:
             raise HTTPException(400, f"Not enough stock for {consumable.name}")
-        consumables_map[item.consumable_id] = (consumable, qty)
+        planned.append((consumable, qty))
 
     work_log = WorkLog(
         service_id=data.service_id,
@@ -49,13 +50,13 @@ async def complete_work(data: WorkLogCreate, session: AsyncSession = Depends(get
         cost=Decimal(str(data.cost)),
     )
     session.add(work_log)
-    await session.flush()  # получаем work_log.id до коммита всей транзакции
+    await session.flush()
 
     low_stock_items = []
-    for consumable_id, (consumable, qty) in consumables_map.items():
+    for consumable, qty in planned:
         consumable.quantity -= qty
         session.add(ConsumableUsage(
-            consumable_id=consumable_id,
+            consumable_id=consumable.id,
             quantity=qty,
             used_by=data.master_telegram_id,
             work_log_id=work_log.id,
