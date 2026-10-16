@@ -1,12 +1,14 @@
 import asyncio
-import os
-
 import httpx
+import os
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
+
 from inventory_handlers import router as inventory_router
 from worklog_handlers import router as worklog_router
-from main_menu import pending_menu, staff_menu
+from import_handlers import router as import_router
+from main_menu import menu_for, pending_menu
 
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 BACKEND_URL = os.environ.get("BACKEND_URL", "http://backend:8000")
@@ -16,24 +18,24 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 dp.include_router(inventory_router)
 dp.include_router(worklog_router)
+dp.include_router(import_router)
 
 
 @dp.message(Command("start"))
-async def start_handler(message: types.Message):
+async def start_handler(message: types.Message, state: FSMContext):
+    await state.clear()
     async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            f"{BACKEND_URL}/auth/request-access",
-            params={
-                "telegram_id": message.from_user.id,
-                "username": message.from_user.username,
-            },
-        )
+        resp = await client.post(f"{BACKEND_URL}/auth/request-access", params={
+            "telegram_id": message.from_user.id,
+            "username": message.from_user.username,
+        })
         if resp.status_code != 200:
             await message.answer(f"Ошибка backend: {resp.status_code}")
             return
         data = resp.json()
 
-    if data["status"] == "pending":
+    role = data["status"]
+    if role == "pending":
         await message.answer(
             "Заявка на доступ отправлена администратору. Ожидай подтверждения.",
             reply_markup=pending_menu(),
@@ -43,10 +45,8 @@ async def start_handler(message: types.Message):
             f"Новая заявка: @{message.from_user.username} (id {message.from_user.id})\n"
             f"Подтвердить: /approve {message.from_user.id} master",
         )
-    elif data["status"] in ("master", "admin"):
-        await message.answer(f"Твоя роль: {data['status']}", reply_markup=staff_menu())
     else:
-        await message.answer(f"Твоя роль: {data['status']}")
+        await message.answer(f"Твоя роль: {role}", reply_markup=menu_for(role, message.from_user.id))
 
 
 @dp.message(Command("approve"))
@@ -56,21 +56,17 @@ async def approve_handler(message: types.Message):
     parts = message.text.split()
     telegram_id, role = int(parts[1]), parts[2]
     async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            f"{BACKEND_URL}/auth/approve",
-            params={
-                "telegram_id": telegram_id,
-                "role": role,
-                "admin_id": message.from_user.id,
-            },
-        )
+        resp = await client.post(f"{BACKEND_URL}/auth/approve", params={
+            "telegram_id": telegram_id, "role": role, "admin_id": message.from_user.id,
+        })
         if resp.status_code != 200:
             await message.answer(f"Ошибка backend: {resp.status_code}")
             return
     await message.answer(f"Пользователь {telegram_id} получил роль {role}")
-    menu = staff_menu() if role in ("master", "admin") else None
     await bot.send_message(
-        telegram_id, f"Доступ подтверждён! Твоя роль: {role}", reply_markup=menu
+        telegram_id,
+        f"Доступ подтверждён! Твоя роль: {role}",
+        reply_markup=menu_for(role, telegram_id),
     )
 
 
