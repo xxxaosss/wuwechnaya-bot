@@ -1,13 +1,12 @@
 import httpx
-from aiogram import Router, types, F
+from aiogram import Bot, Router, types, F
 from aiogram.fsm.context import FSMContext
 
 from states import WorkLogStates
-from keyboards import (
-    services_keyboard, consumables_multiselect_keyboard, mode_keyboard, cancel_keyboard,
-)
+from keyboards import services_keyboard, mode_keyboard, cancel_keyboard
 from auth_helper import require_staff
-from inventory_handlers import fetch_consumables
+from api import fetch_consumables
+from picker import start_picker, show_picker, close_list
 from fmt import fmt_stock, num, parse_number
 
 router = Router()
@@ -32,6 +31,7 @@ async def worklog_start(message: types.Message, state: FSMContext, backend_url: 
 
 @router.callback_query(F.data == "service:new", WorkLogStates.choosing_service)
 async def new_service_name(callback: types.CallbackQuery, state: FSMContext):
+    await close_list(callback, "Новая услуга")
     await state.set_state(WorkLogStates.entering_new_service_name)
     await callback.message.answer("Введи название новой услуги:")
     await callback.answer()
@@ -45,7 +45,7 @@ async def new_service_name_entered(message: types.Message, state: FSMContext):
 
 
 @router.message(WorkLogStates.entering_new_service_price)
-async def new_service_price_entered(message: types.Message, state: FSMContext, backend_url: str):
+async def new_service_price_entered(message: types.Message, state: FSMContext, bot: Bot, backend_url: str):
     price = parse_number(message.text, allow_zero=True)
     if price is None:
         await message.answer("Введи число, например: 1500")
@@ -62,40 +62,41 @@ async def new_service_price_entered(message: types.Message, state: FSMContext, b
         return
 
     service = resp.json()
-    await proceed_to_consumables(message, state, service["id"], service["name"], service["price"], backend_url)
+    await proceed_to_consumables(
+        bot, message.chat.id, state, service["id"], service["name"], service["price"], backend_url
+    )
 
 
 @router.callback_query(F.data.startswith("service:"), WorkLogStates.choosing_service)
-async def service_chosen(callback: types.CallbackQuery, state: FSMContext, backend_url: str):
+async def service_chosen(callback: types.CallbackQuery, state: FSMContext, bot: Bot, backend_url: str):
     service_id = int(callback.data.split(":")[1])
     services = await fetch_services(backend_url)
     service = next((s for s in services if s["id"] == service_id), None)
     if not service:
         await callback.answer("Услуга не найдена")
         return
+
+    await close_list(callback, f"Услуга: {service['name']}")
     await proceed_to_consumables(
-        callback.message, state, service["id"], service["name"], service["price"], backend_url
+        bot, callback.message.chat.id, state, service["id"], service["name"], service["price"], backend_url
     )
     await callback.answer()
 
 
-async def proceed_to_consumables(message, state: FSMContext, service_id, service_name, service_price, backend_url):
+async def proceed_to_consumables(bot: Bot, chat_id: int, state: FSMContext,
+                                 service_id, service_name, service_price, backend_url):
     await state.update_data(
         service_id=service_id,
         service_name=service_name,
         service_price=service_price,
         selected_consumables=[],
     )
-    consumables = await fetch_consumables(backend_url)
     await state.set_state(WorkLogStates.choosing_consumables)
-    await message.answer(
-        f"Услуга: {service_name}\nОтметь использованные расходники:",
-        reply_markup=consumables_multiselect_keyboard(consumables, []),
-    )
+    await start_picker(bot, chat_id, state, backend_url)
 
 
 @router.callback_query(F.data.startswith("toggle:"), WorkLogStates.choosing_consumables)
-async def toggle_consumable(callback: types.CallbackQuery, state: FSMContext, backend_url: str):
+async def toggle_consumable(callback: types.CallbackQuery, state: FSMContext, bot: Bot, backend_url: str):
     consumable_id = int(callback.data.split(":")[1])
     data = await state.get_data()
     selected = data.get("selected_consumables", [])
@@ -105,18 +106,17 @@ async def toggle_consumable(callback: types.CallbackQuery, state: FSMContext, ba
         selected.append(consumable_id)
     await state.update_data(selected_consumables=selected)
 
-    consumables = await fetch_consumables(backend_url)
-    await callback.message.edit_reply_markup(
-        reply_markup=consumables_multiselect_keyboard(consumables, selected)
-    )
+    await show_picker(bot, callback.message.chat.id, state, backend_url,
+                      message_id=callback.message.message_id)
     await callback.answer()
 
 
 @router.callback_query(F.data == "consumables:none", WorkLogStates.choosing_consumables)
 async def no_consumables(callback: types.CallbackQuery, state: FSMContext):
+    await close_list(callback, "Расходники: без расходников")
     await state.update_data(selected_consumables=[], consumables_queue=[], consumables_usage={})
     await state.set_state(WorkLogStates.entering_client_name)
-    await callback.message.answer("Без расходников. Имя клиента? (или \"-\")")
+    await callback.message.answer("Имя клиента? (или \"-\")")
     await callback.answer()
 
 
@@ -127,6 +127,8 @@ async def consumables_done(callback: types.CallbackQuery, state: FSMContext, bac
     if not selected:
         await callback.answer("Выбери хотя бы один расходник или нажми «Без расходников»", show_alert=True)
         return
+
+    await close_list(callback, f"Расходников выбрано: {len(selected)}")
     await state.update_data(consumables_queue=list(selected), consumables_usage={})
     await ask_next_quantity(callback.message, state, backend_url)
     await callback.answer()

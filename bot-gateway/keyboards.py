@@ -4,14 +4,38 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from fmt import fmt_stock
 
 
-def consumables_keyboard(consumables: list[dict], action: str) -> InlineKeyboardMarkup:
+def pick_keyboard(items: list[dict], action: str, page: int, pages: int, query: str = "",
+                  selected: list | None = None, with_new: bool = False) -> InlineKeyboardMarkup:
+    """items — позиции текущей страницы.
+    action: 'receive' / 'use' — одиночный выбор, 'toggle' — мультивыбор (selected не None)."""
     builder = InlineKeyboardBuilder()
-    for c in consumables:
-        builder.button(text=f"{c['name']} — {fmt_stock(c)}", callback_data=f"{action}:{c['id']}")
-    if action == "receive":
+    multi = selected is not None
+
+    for c in items:
+        mark = ("✅ " if c["id"] in selected else "⬜ ") if multi else ""
+        builder.button(text=f"{mark}{c['name']} — {fmt_stock(c)}", callback_data=f"{action}:{c['id']}")
+    sizes = [1] * len(items)
+
+    if pages > 1:
+        builder.button(text="◀", callback_data=f"page:{page - 1}" if page > 0 else "noop")
+        builder.button(text=f"{page + 1}/{pages}", callback_data="noop")
+        builder.button(text="▶", callback_data=f"page:{page + 1}" if page < pages - 1 else "noop")
+        sizes.append(3)
+
+    if query:
+        builder.button(text="🔄 Сбросить поиск", callback_data="search:reset")
+        sizes.append(1)
+    if with_new:
         builder.button(text="➕ Новый расходник", callback_data="receive:new")
+        sizes.append(1)
+    if multi:
+        builder.button(text="Без расходников", callback_data="consumables:none")
+        builder.button(text=f"✅ Готово ({len(selected)})", callback_data="consumables:done")
+        sizes.append(2)
+
     builder.button(text="❌ Отмена", callback_data="cancel")
-    builder.adjust(1)
+    sizes.append(1)
+    builder.adjust(*sizes)
     return builder.as_markup()
 
 
@@ -45,18 +69,6 @@ def services_keyboard(services: list[dict]) -> InlineKeyboardMarkup:
     for s in services:
         builder.button(text=f"{s['name']} — {s['price']}₽", callback_data=f"service:{s['id']}")
     builder.button(text="➕ Новая услуга", callback_data="service:new")
-    builder.button(text="❌ Отмена", callback_data="cancel")
-    builder.adjust(1)
-    return builder.as_markup()
-
-
-def consumables_multiselect_keyboard(consumables: list[dict], selected: list[int]) -> InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-    for c in consumables:
-        mark = "✅ " if c["id"] in selected else "⬜ "
-        builder.button(text=f"{mark}{c['name']} ({fmt_stock(c)})", callback_data=f"toggle:{c['id']}")
-    builder.button(text="Без расходников", callback_data="consumables:none")
-    builder.button(text="✅ Готово", callback_data="consumables:done")
     builder.button(text="❌ Отмена", callback_data="cancel")
     builder.adjust(1)
     return builder.as_markup()

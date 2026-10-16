@@ -1,11 +1,13 @@
 import httpx
-from aiogram import Router, types, F
+from aiogram import Bot, Router, types, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 
 from states import ReceiveStates, UseStates
-from keyboards import consumables_keyboard, cancel_keyboard, kind_keyboard, mode_keyboard
+from keyboards import cancel_keyboard, kind_keyboard, mode_keyboard
 from auth_helper import require_staff
+from api import fetch_consumables, find_consumable
+from picker import start_picker, close_list
 from fmt import fmt_stock, parse_number
 
 router = Router()
@@ -13,10 +15,16 @@ router = Router()
 NO_ACCESS = "Доступ только для мастеров и администраторов."
 
 
-async def fetch_consumables(backend_url: str) -> list[dict]:
-    async with httpx.AsyncClient() as client:
-        resp = await client.get(f"{backend_url}/inventory/consumables")
-        return resp.json() if resp.status_code == 200 else []
+async def send_lines(message: types.Message, header: str, lines: list[str]):
+    """Отправляет длинный список частями (лимит Telegram — 4096 символов)."""
+    chunk = header
+    for line in lines:
+        if len(chunk) + len(line) + 1 > 3800:
+            await message.answer(chunk)
+            chunk = ""
+        chunk += ("\n" if chunk else "") + line
+    if chunk:
+        await message.answer(chunk)
 
 
 # ---------------- Остатки ----------------
@@ -37,28 +45,25 @@ async def stock_handler(message: types.Message, backend_url: str):
     for c in consumables:
         flag = " ⚠️ заканчивается" if c["quantity"] <= c["threshold"] else ""
         lines.append(f"• {c['name']}: {fmt_stock(c)}{flag}")
-    await message.answer("Текущие остатки:\n" + "\n".join(lines))
+    await send_lines(message, "Текущие остатки:", lines)
 
 
 # ---------------- Приход ----------------
 
 @router.message(F.text == "➕ Приход")
 @router.message(Command("receive"))
-async def receive_start(message: types.Message, state: FSMContext, backend_url: str):
+async def receive_start(message: types.Message, state: FSMContext, bot: Bot, backend_url: str):
     if not await require_staff(backend_url, message.from_user.id):
         await message.answer(NO_ACCESS)
         return
 
-    consumables = await fetch_consumables(backend_url)
     await state.set_state(ReceiveStates.choosing_consumable)
-    await message.answer(
-        "Выбери расходник для прихода или добавь новый:",
-        reply_markup=consumables_keyboard(consumables, "receive"),
-    )
+    await start_picker(bot, message.chat.id, state, backend_url)
 
 
 @router.callback_query(F.data == "receive:new", ReceiveStates.choosing_consumable)
 async def receive_new_name(callback: types.CallbackQuery, state: FSMContext):
+    await close_list(callback, "Новый расходник")
     await state.set_state(ReceiveStates.entering_new_name)
     await callback.message.answer("Введи название нового расходника:")
     await callback.answer()
@@ -117,11 +122,19 @@ async def receive_pack_size_entered(message: types.Message, state: FSMContext, b
 
 
 @router.callback_query(F.data.startswith("receive:"), ReceiveStates.choosing_consumable)
-async def receive_choose(callback: types.CallbackQuery, state: FSMContext):
+async def receive_choose(callback: types.CallbackQuery, state: FSMContext, backend_url: str):
     consumable_id = int(callback.data.split(":")[1])
+    consumable = await find_consumable(backend_url, consumable_id)
+    if consumable is None:
+        await callback.answer("Расходник не найден", show_alert=True)
+        return
+
+    await close_list(callback, f"Выбрано: «{consumable['name']}»")
     await state.update_data(consumable_id=consumable_id)
     await state.set_state(ReceiveStates.entering_pieces)
-    await callback.message.answer("Сколько штук пришло?", reply_markup=cancel_keyboard())
+    await callback.message.answer(
+        f"Сейчас: {fmt_stock(consumable)}\nСколько штук пришло?", reply_markup=cancel_keyboard()
+    )
     await callback.answer()
 
 
@@ -153,31 +166,30 @@ async def receive_pieces_entered(message: types.Message, state: FSMContext, back
 
 @router.message(F.text == "➖ Списать")
 @router.message(Command("use"))
-async def use_start(message: types.Message, state: FSMContext, backend_url: str):
+async def use_start(message: types.Message, state: FSMContext, bot: Bot, backend_url: str):
     if not await require_staff(backend_url, message.from_user.id):
         await message.answer(NO_ACCESS)
         return
 
-    consumables = await fetch_consumables(backend_url)
-    if not consumables:
+    if not await fetch_consumables(backend_url):
         await message.answer("Расходников пока нет.")
         return
 
     await state.set_state(UseStates.choosing_consumable)
-    await message.answer("Какой расходник списать?", reply_markup=consumables_keyboard(consumables, "use"))
+    await start_picker(bot, message.chat.id, state, backend_url)
 
 
 @router.callback_query(F.data.startswith("use:"), UseStates.choosing_consumable)
 async def use_choose(callback: types.CallbackQuery, state: FSMContext, backend_url: str):
     consumable_id = int(callback.data.split(":")[1])
-    consumables = await fetch_consumables(backend_url)
-    consumable = next((c for c in consumables if c["id"] == consumable_id), None)
+    consumable = await find_consumable(backend_url, consumable_id)
     if consumable is None:
         await callback.answer("Расходник не найден", show_alert=True)
         return
 
+    await close_list(callback, f"Выбрано: «{consumable['name']}»")
     await state.update_data(consumable_id=consumable_id, unit=consumable["unit"])
-    header = f"«{consumable['name']}» — остаток {fmt_stock(consumable)}"
+    header = f"Остаток {fmt_stock(consumable)}"
 
     if consumable.get("pack_size"):
         await state.set_state(UseStates.choosing_mode)
