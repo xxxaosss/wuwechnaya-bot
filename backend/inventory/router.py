@@ -107,10 +107,11 @@ async def import_lines(data: ImportRequest, session: AsyncSession = Depends(get_
             updated += 1
 
         pieces = D(line.pieces)
-        added = apply_receive(consumable, pieces)
-        session.add(ConsumableIncoming(
-            consumable_id=consumable.id, quantity=added, pieces=pieces, created_by=data.telegram_id,
-        ))
+        if pieces > 0:  # 0 штук — только завести позицию, без записи прихода
+            added = apply_receive(consumable, pieces)
+            session.add(ConsumableIncoming(
+                consumable_id=consumable.id, quantity=added, pieces=pieces, created_by=data.telegram_id,
+            ))
 
     await session.commit()
     return {"created": created, "updated": updated}

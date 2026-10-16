@@ -74,8 +74,8 @@ def parse_csv(raw: bytes):
 
         name = row.get("name", "")
         pieces = to_float(row.get("pieces"))
-        if not name or pieces is None or pieces <= 0:
-            errors.append(f"строка {i}: нужны Название и Штук больше нуля")
+        if not name or pieces is None or pieces < 0:
+            errors.append(f"строка {i}: нужны Название и Штук (0 или больше)")
             continue
 
         volume = to_float(row.get("volume"))

@@ -36,7 +36,7 @@ class UseRequest(BaseModel):
 
 class ImportLine(BaseModel):
     name: str
-    pieces: float = Field(gt=0)
+    pieces: float = Field(ge=0)
     volume: Optional[float] = None
     unit: Optional[str] = None
 
