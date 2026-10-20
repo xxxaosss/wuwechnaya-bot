@@ -1,4 +1,4 @@
-"""Общий выбор расходника с поиском и страницами для «Приход», «Списать», «Провести работу».
+"""Общий выбор расходника с поиском и страницами: приход, списание, работа, настройка расходника.
 
 Состояние (FSM data): pick_query, pick_page, list_msg_id.
 Какой режим — определяется по текущему состоянию пользователя.
@@ -11,7 +11,7 @@ from aiogram.fsm.context import FSMContext
 from api import fetch_consumables
 from keyboards import pick_keyboard
 from search import filter_consumables, paginate
-from states import ReceiveStates, UseStates, WorkLogStates
+from states import ReceiveStates, UseStates, WorkLogStates, EditStates
 
 router = Router()
 
@@ -19,6 +19,7 @@ PICK_STATES = (
     ReceiveStates.choosing_consumable,
     UseStates.choosing_consumable,
     WorkLogStates.choosing_consumables,
+    EditStates.choosing_consumable,
 )
 
 
@@ -43,6 +44,9 @@ async def show_picker(bot: Bot, chat_id: int, state: FSMContext, backend_url: st
     elif current == UseStates.choosing_consumable.state:
         action = "use"
         title = "Какой расходник списать?"
+    elif current == EditStates.choosing_consumable.state:
+        action = "edit"
+        title = "Какой расходник настроить?"
     else:
         action = "receive"
         with_new = True

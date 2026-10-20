@@ -4,11 +4,11 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 
 from states import ReceiveStates, UseStates
-from keyboards import cancel_keyboard, kind_keyboard, mode_keyboard
+from keyboards import cancel_keyboard, kind_keyboard, mode_keyboard, receive_keyboard
 from auth_helper import require_staff
-from api import fetch_consumables, find_consumable
+from api import fetch_consumables, find_consumable, update_consumable
 from picker import start_picker, close_list
-from fmt import fmt_stock, parse_number
+from fmt import fmt_stock, num, parse_number
 
 router = Router()
 
@@ -25,6 +25,13 @@ async def send_lines(message: types.Message, header: str, lines: list[str]):
         chunk += ("\n" if chunk else "") + line
     if chunk:
         await message.answer(chunk)
+
+
+def receive_prompt(c: dict) -> str:
+    text = f"«{c['name']}»\nСейчас: {fmt_stock(c)}"
+    if c.get("pack_size"):
+        text += f"\nВ пачке: {num(c['pack_size'])} {c['unit']} (нетто)"
+    return text + "\nСколько пачек (штук) пришло?"
 
 
 # ---------------- Остатки ----------------
@@ -90,7 +97,10 @@ async def create_and_continue(message: types.Message, state: FSMContext, backend
     consumable = resp.json()
     await state.update_data(consumable_id=consumable["id"])
     await state.set_state(ReceiveStates.entering_pieces)
-    await message.answer(f"«{name}» добавлен. Сколько штук пришло?", reply_markup=cancel_keyboard())
+    await message.answer(
+        f"«{name}» добавлен.\nСколько пачек (штук) пришло?",
+        reply_markup=receive_keyboard(unit if pack_size else None),
+    )
 
 
 @router.callback_query(F.data.startswith("kind:"), ReceiveStates.choosing_new_kind)
@@ -106,9 +116,11 @@ async def receive_kind_chosen(callback: types.CallbackQuery, state: FSMContext, 
     unit = "мл" if kind == "ml" else "г"
     await state.update_data(new_unit=unit)
     await state.set_state(ReceiveStates.entering_pack_size)
-    await callback.message.answer(
-        f"Сколько {unit} в одной штуке? (например, 1000)", reply_markup=cancel_keyboard()
+    prompt = (
+        "Сколько мл в одной пачке? (например, 1000)" if unit == "мл"
+        else "Вес содержимого одной пачки (нетто), г? Без упаковки, например 1000"
     )
+    await callback.message.answer(prompt, reply_markup=cancel_keyboard())
 
 
 @router.message(ReceiveStates.entering_pack_size)
@@ -133,9 +145,46 @@ async def receive_choose(callback: types.CallbackQuery, state: FSMContext, backe
     await state.update_data(consumable_id=consumable_id)
     await state.set_state(ReceiveStates.entering_pieces)
     await callback.message.answer(
-        f"Сейчас: {fmt_stock(consumable)}\nСколько штук пришло?", reply_markup=cancel_keyboard()
+        receive_prompt(consumable),
+        reply_markup=receive_keyboard(consumable["unit"] if consumable.get("pack_size") else None),
     )
     await callback.answer()
+
+
+@router.callback_query(F.data == "rcv:net", ReceiveStates.entering_pieces)
+async def receive_net_edit(callback: types.CallbackQuery, state: FSMContext, backend_url: str):
+    data = await state.get_data()
+    consumable = await find_consumable(backend_url, data["consumable_id"])
+    if consumable is None or not consumable.get("pack_size"):
+        await callback.answer("Нетто задаётся только для позиций в мл или г", show_alert=True)
+        return
+
+    await state.set_state(ReceiveStates.entering_new_net)
+    await callback.message.answer(
+        f"Новый вес нетто одной пачки, {consumable['unit']}? (сейчас {num(consumable['pack_size'])})",
+        reply_markup=cancel_keyboard(),
+    )
+    await callback.answer()
+
+
+@router.message(ReceiveStates.entering_new_net)
+async def receive_net_entered(message: types.Message, state: FSMContext, backend_url: str):
+    net = parse_number(message.text)
+    if net is None:
+        await message.answer("Введи число больше нуля, например: 1015")
+        return
+
+    data = await state.get_data()
+    updated = await update_consumable(backend_url, data["consumable_id"], pack_size=net)
+    if updated is None:
+        await message.answer("Не удалось сохранить. Попробуй ещё раз.")
+        return
+
+    await state.set_state(ReceiveStates.entering_pieces)
+    await message.answer(
+        "Нетто обновлено.\n" + receive_prompt(updated),
+        reply_markup=receive_keyboard(updated["unit"]),
+    )
 
 
 @router.message(ReceiveStates.entering_pieces)

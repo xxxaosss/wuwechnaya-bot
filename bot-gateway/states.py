@@ -7,6 +7,7 @@ class ReceiveStates(StatesGroup):
     choosing_new_kind = State()
     entering_pack_size = State()
     entering_pieces = State()
+    entering_new_net = State()
 
 
 class UseStates(StatesGroup):
@@ -29,3 +30,11 @@ class WorkLogStates(StatesGroup):
 class ImportStates(StatesGroup):
     waiting_file = State()
     confirming = State()
+
+
+class EditStates(StatesGroup):
+    choosing_consumable = State()
+    menu = State()
+    entering_net = State()
+    entering_kind_pack = State()
+    entering_threshold = State()

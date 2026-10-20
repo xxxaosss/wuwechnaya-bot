@@ -12,6 +12,7 @@ class ConsumableOut(BaseModel):
     pack_size: Optional[float] = None
     pieces: float
     threshold: float
+    threshold_packs: float
 
 
 class ConsumableCreate(BaseModel):
@@ -19,6 +20,12 @@ class ConsumableCreate(BaseModel):
     unit: str = "шт"
     pack_size: Optional[float] = None
     threshold: float = 0
+
+
+class ConsumableUpdate(BaseModel):
+    unit: Optional[str] = None                                   # шт / мл / г
+    pack_size: Optional[float] = Field(default=None, gt=0)       # нетто одной пачки
+    threshold_packs: Optional[float] = Field(default=None, ge=0)  # порог в пачках
 
 
 class ReceiveRequest(BaseModel):
@@ -39,6 +46,7 @@ class ImportLine(BaseModel):
     pieces: float = Field(ge=0)
     volume: Optional[float] = None
     unit: Optional[str] = None
+    weight: Optional[float] = Field(default=None, gt=0)   # нетто пачки в граммах
 
 
 class ImportRequest(BaseModel):

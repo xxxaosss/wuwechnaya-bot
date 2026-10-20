@@ -4,10 +4,22 @@ def num(x) -> str:
 
 
 def fmt_stock(c: dict) -> str:
-    """'0.85 шт (850 мл)' для позиций с объёмом, '3 шт' для остальных."""
+    """'0.85 шт (850 г)' для позиций с нетто, '3 шт' для остальных."""
     if c.get("pack_size"):
         return f"{num(c['pieces'])} шт ({num(c['quantity'])} {c['unit']})"
     return f"{num(c['quantity'])} {c['unit']}"
+
+
+def fmt_config(c: dict) -> str:
+    """'Учёт: г, в пачке 1015 г (нетто), порог: 1 пач.'"""
+    if c.get("pack_size"):
+        pack = f"в пачке {num(c['pack_size'])} {c['unit']} (нетто)"
+        word = "пач."
+    else:
+        pack = "считается в штуках"
+        word = "шт"
+    thr = f"порог: {num(c['threshold_packs'])} {word}" if c.get("threshold") else "порог не задан"
+    return f"Учёт: {c['unit']}, {pack}, {thr}"
 
 
 def parse_number(text, allow_zero: bool = False):

@@ -7,28 +7,31 @@ from aiogram.fsm.context import FSMContext
 from states import ImportStates
 from keyboards import cancel_keyboard, confirm_import_keyboard
 from auth_helper import require_admin
-from inventory_handlers import fetch_consumables
+from api import fetch_consumables
 from fmt import num, fmt_stock
 
 router = Router()
 
 HELP = (
     "Пришли CSV-файл (разделитель «;», кодировка UTF-8) в таком формате:\n\n"
-    "Название;Штук;Объём;Ед\n"
-    "Шампунь 1000 мл;2;1000;мл\n"
-    "Пудра 500 г;1;500;г\n"
-    "Перчатки;10;;\n\n"
-    "• Название и Штук — обязательные\n"
-    "• Объём — сколько мл/г в одной штуке (пусто — учёт только в штуках)\n"
-    "• Ед — мл или г (если объём указан, а Ед пустая — мл)\n"
-    "• Если позиция с таким названием уже есть, штуки добавятся к остатку"
+    "Название;Штук;Объём;Ед;Вес, г\n"
+    "Шампунь 1000 мл;2;1000;мл;\n"
+    "Краска 60 мл;3;60;мл;62\n"
+    "Перчатки;10;;;\n\n"
+    "• Название и Штук — обязательные (Штук можно 0, чтобы только завести позицию)\n"
+    "• Объём — сколько мл/г в одной пачке (пусто — учёт только в штуках)\n"
+    "• Ед — мл или г\n"
+    "• Вес, г — нетто одной пачки. Если указан, позиция считается в граммах по этому весу, "
+    "а у уже существующей позиции учёт переключится на граммы (число пачек сохранится)\n"
+    "• Позиции ищутся по названию: если такая уже есть, пачки добавятся к остатку"
 )
 
 ALIASES = {
     "name": {"name", "название", "наименование", "позиция"},
     "pieces": {"pieces", "штук", "шт", "количество", "кол-во"},
-    "volume": {"volume", "объем", "объём", "вес", "pack_size"},
+    "volume": {"volume", "объем", "объём", "pack_size"},
     "unit": {"unit", "ед", "ед.", "единица"},
+    "weight": {"weight", "вес, г", "вес,г", "вес г", "вес", "нетто", "нетто, г"},
 }
 
 
@@ -87,12 +90,19 @@ def parse_csv(raw: bytes):
             errors.append(f"строка {i}: Объём должен быть больше нуля")
             continue
 
+        raw_weight = row.get("weight", "")
+        weight = to_float(raw_weight)
+        if raw_weight and (weight is None or weight <= 0):
+            errors.append(f"строка {i}: «Вес, г» должен быть числом больше нуля")
+            continue
+
         has_volume = bool(volume) and unit != "шт"
         lines.append({
             "name": name,
             "pieces": pieces,
             "volume": volume if has_volume else None,
             "unit": (unit or "мл") if has_volume else None,
+            "weight": weight,
         })
 
     if not lines and not errors:
@@ -100,21 +110,40 @@ def parse_csv(raw: bytes):
     return lines, errors
 
 
+def will_convert(line: dict, ex: dict | None) -> bool:
+    return bool(ex and line.get("weight")
+                and (ex["unit"] != "г" or (ex.get("pack_size") or None) != line["weight"]))
+
+
 def preview(lines: list[dict], existing: dict) -> str:
     out = []
     for l in lines[:15]:
         ex = existing.get(l["name"].strip().lower())
-        vol = f" × {num(l['volume'])} {l['unit']}" if l["volume"] else ""
-        head = f"• {l['name']}: +{num(l['pieces'])} шт{vol}"
+        if l.get("weight"):
+            spec = f" × {num(l['weight'])} г нетто"
+        elif l["volume"]:
+            spec = f" × {num(l['volume'])} {l['unit']}"
+        else:
+            spec = ""
+        head = f"• {l['name']}: +{num(l['pieces'])} шт{spec}"
         if ex is None:
             out.append(head + " — новая позиция")
             continue
-        pack = ex.get("pack_size") or 1
-        after = {**ex, "pieces": ex["pieces"] + l["pieces"], "quantity": ex["quantity"] + l["pieces"] * pack}
-        warn = ""
-        if (ex.get("pack_size") or None) != (l["volume"] or None):
-            warn = " ⚠️ объём упаковки отличается от базы, возьмётся из базы"
-        out.append(f"{head} — было {fmt_stock(ex)}, станет {fmt_stock(after)}{warn}")
+
+        pieces_after = ex["pieces"] + l["pieces"]
+        if l.get("weight"):
+            unit_after, pack_after = "г", l["weight"]
+            note = " ⚙️ учёт станет: г" if will_convert(l, ex) else ""
+        else:
+            unit_after, pack_after = ex["unit"], ex.get("pack_size")
+            note = ""
+            if (ex.get("pack_size") or None) != (l["volume"] or None):
+                note = " ⚠️ объём упаковки отличается от базы, возьмётся из базы"
+        after = {
+            "unit": unit_after, "pack_size": pack_after, "pieces": pieces_after,
+            "quantity": pieces_after * (pack_after or 1),
+        }
+        out.append(f"{head} — было {fmt_stock(ex)}, станет {fmt_stock(after)}{note}")
     if len(lines) > 15:
         out.append(f"… и ещё {len(lines) - 15}")
     return "\n".join(out)
@@ -148,11 +177,14 @@ async def import_file(message: types.Message, state: FSMContext, bot: Bot, backe
 
     existing = {c["name"].strip().lower(): c for c in await fetch_consumables(backend_url)}
     new_count = sum(1 for l in lines if l["name"].strip().lower() not in existing)
+    conv_count = sum(1 for l in lines if will_convert(l, existing.get(l["name"].strip().lower())))
 
     await state.update_data(import_lines=lines)
     await state.set_state(ImportStates.confirming)
+    summary = f"Прочитал {len(lines)} поз. (новых: {new_count}"
+    summary += f", перейдут на граммы: {conv_count})" if conv_count else ")"
     await message.answer(
-        f"Прочитал {len(lines)} поз. (новых: {new_count}):\n\n{preview(lines, existing)}\n\nЗагружаем?",
+        f"{summary}:\n\n{preview(lines, existing)}\n\nЗагружаем?",
         reply_markup=confirm_import_keyboard(),
     )
 
@@ -178,6 +210,10 @@ async def import_confirm(callback: types.CallbackQuery, state: FSMContext, backe
         return
 
     result = resp.json()
-    await callback.message.answer(
-        f"Готово ✅ Новых позиций: {result['created']}, пополнено существующих: {result['updated']}"
+    text = (
+        f"Готово ✅ Новых позиций: {result['created']}, "
+        f"пополнено существующих: {result['updated']}"
     )
+    if result.get("converted"):
+        text += f"\nПереведено на граммы: {result['converted']}"
+    await callback.message.answer(text)

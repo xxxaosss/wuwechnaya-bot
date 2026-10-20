@@ -22,7 +22,8 @@ def admin_menu() -> ReplyKeyboardMarkup:
     builder.button(text="➖ Списать")
     builder.button(text="💼 Провести работу")
     builder.button(text="📥 Импорт накладной")
-    builder.adjust(2, 2, 1)
+    builder.button(text="✏️ Расходник")
+    builder.adjust(2, 2, 2)
     return builder.as_markup(resize_keyboard=True)
 
 

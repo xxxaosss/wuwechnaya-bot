@@ -3,11 +3,13 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from fmt import fmt_stock
 
+UNIT_BY_KIND = {"pieces": "шт", "ml": "мл", "g": "г"}
+
 
 def pick_keyboard(items: list[dict], action: str, page: int, pages: int, query: str = "",
                   selected: list | None = None, with_new: bool = False) -> InlineKeyboardMarkup:
     """items — позиции текущей страницы.
-    action: 'receive' / 'use' — одиночный выбор, 'toggle' — мультивыбор (selected не None)."""
+    action: 'receive' / 'use' / 'edit' — одиночный выбор, 'toggle' — мультивыбор (selected не None)."""
     builder = InlineKeyboardBuilder()
     multi = selected is not None
 
@@ -48,10 +50,33 @@ def cancel_keyboard() -> InlineKeyboardMarkup:
 def kind_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="📦 Только штуки", callback_data="kind:pieces")
-    builder.button(text="💧 Штуки + объём (мл)", callback_data="kind:ml")
-    builder.button(text="⚖️ Штуки + вес (г)", callback_data="kind:g")
+    builder.button(text="💧 Пачки с объёмом (мл)", callback_data="kind:ml")
+    builder.button(text="⚖️ Пачки с весом (г)", callback_data="kind:g")
     builder.button(text="❌ Отмена", callback_data="cancel")
     builder.adjust(1)
+    return builder.as_markup()
+
+
+def receive_keyboard(unit: str | None = None) -> InlineKeyboardMarkup:
+    """Для прихода: кнопка изменения нетто показывается только у позиций в мл/г."""
+    builder = InlineKeyboardBuilder()
+    if unit:
+        builder.button(text=f"⚖️ Изменить нетто ({unit})", callback_data="rcv:net")
+    builder.button(text="❌ Отмена", callback_data="cancel")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def edit_menu_keyboard(c: dict) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for kind, unit in UNIT_BY_KIND.items():
+        mark = "✅ " if c["unit"] == unit else ""
+        builder.button(text=f"{mark}Учёт: {unit}", callback_data=f"ekind:{kind}")
+    if c.get("pack_size"):
+        builder.button(text="⚖️ Нетто пачки", callback_data="ecfg:net")
+    builder.button(text="🔔 Порог", callback_data="ecfg:thr")
+    builder.button(text="✔️ Готово", callback_data="ecfg:done")
+    builder.adjust(3, 2, 1)
     return builder.as_markup()
 
 

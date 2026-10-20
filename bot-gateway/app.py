@@ -8,6 +8,7 @@ from aiogram.fsm.context import FSMContext
 from inventory_handlers import router as inventory_router
 from worklog_handlers import router as worklog_router
 from import_handlers import router as import_router
+from edit_handlers import router as edit_router
 from picker import router as picker_router
 from main_menu import menu_for, pending_menu
 
@@ -20,6 +21,7 @@ dp = Dispatcher()
 dp.include_router(inventory_router)
 dp.include_router(worklog_router)
 dp.include_router(import_router)
+dp.include_router(edit_router)
 dp.include_router(picker_router)  # последним: поиск по тексту не должен перехватывать кнопки меню
 
 
