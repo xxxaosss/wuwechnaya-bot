@@ -9,10 +9,10 @@ Telegram-бот и backend для парикмахерской: учёт рас�
 - `bot-gateway/` — aiogram 3, long-polling, входящих портов нет
 - `deploy/` — k8s-манифесты `backend.yaml`, `bot-gateway.yaml`
 - `.github/workflows/` — сборка образов `linux/arm64` в `ghcr.io/xxxaosss/{backend,bot-gateway}:latest`
-- `web-admin/` — пока пусто
+- `web-admin/` — пока пусто; `backend/booking/` — пустая заготовка под запись (не в git)
 
 ## Стек
-Python 3.12 (pyenv, `.python-version`), отдельный venv в `backend/` и `bot-gateway/`.
+Python 3.12 (образы `python:3.12-slim`; `.python-version` в репо нет), отдельный venv в `backend/` и `bot-gateway/`.
 Backend: FastAPI, SQLAlchemy async + asyncpg, Pydantic v2. Бот: aiogram 3, httpx.
 БД: одна PostgreSQL (Helm bitnami), база `db_wu`, схемы `auth`, `inventory`, `worklog`.
 Бот ходит в backend по HTTP (`BACKEND_URL=http://backend:8000`), в БД напрямую не ходит.
@@ -51,12 +51,12 @@ cd bot-gateway && BOT_TOKEN=123456:TEST ADMIN_TELEGRAM_ID=1 python -c "import ap
 Тестов пока нет. Для новой логики писать pytest, начиная с чистых функций.
 
 ## Деплой
-1. `git push`, GitHub Actions собирает образ (только при изменениях в `backend/**` или `bot-gateway/**`), ждать зелёной галочки.
+1. `git push`, GitHub Actions собирает образ (на push — только при изменениях в `backend/**` или `bot-gateway/**`; вручную — `workflow_dispatch`), ждать зелёной галочки.
 2. `kubectl rollout restart deployment backend`, затем `deployment bot-gateway`.
 3. Проверка: `kubectl get pods`, `kubectl logs -l app=bot-gateway --tail=30`.
 
 Сервисы сейчас в namespace `default`. Argo CD на Pi установлен, перенос сервисов в него не сделан.
-Тег `:latest` и `imagePullPolicy: Always`.
+Тег `:latest`. `imagePullPolicy: Always` явно задан только у bot-gateway, у backend он Always по умолчанию из-за `:latest`.
 
 ## Секреты (не печатать, не коммитить, `.env` не читать)
 k8s Secrets: `bot-secrets` (BOT_TOKEN, ADMIN_TELEGRAM_ID), `db-secrets` (DATABASE_URL), `ghcr-secret`.
@@ -68,7 +68,7 @@ k8s Secrets: `bot-secrets` (BOT_TOKEN, ADMIN_TELEGRAM_ID), `db-secrets` (DATABAS
   проверить `ip route get 149.154.166.110` (должен быть `wlan0`).
 - Два экземпляра бота одновременно (старый и новый под) дают TelegramConflictError 409 и CPU в потолок.
   После `rollout restart` убедиться, что остался один под.
-- Бот падал с OOMKilled при лимите 128Mi, сейчас 512Mi.
+- Бот падал с OOMKilled при лимите 128Mi. Сейчас 256Mi (и в `deploy/bot-gateway.yaml`, и в кластере), хватает.
 - Образы только `linux/arm64`. Локальный запуск контейнера на Mac: `--platform linux/arm64`.
 
 ## Известные пробелы

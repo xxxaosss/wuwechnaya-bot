@@ -3,8 +3,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from db import get_session
-from .models import Service, WorkLog
-from .schemas import ServiceOut, ServiceCreate, WorkLogCreate
+from worklog.models import Service, WorkLog
+from worklog.schemas import ServiceOut, ServiceCreate, WorkLogCreate
 from inventory.models import Consumable, ConsumableUsage
 from inventory.units import to_base
 

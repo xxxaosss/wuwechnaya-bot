@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import User
+from auth.models import User
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 

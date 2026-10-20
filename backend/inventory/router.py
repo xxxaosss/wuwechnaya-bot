@@ -3,11 +3,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from db import get_session
-from .models import Consumable, ConsumableIncoming, ConsumableUsage
-from .schemas import (
+from inventory.models import Consumable, ConsumableIncoming, ConsumableUsage
+from inventory.schemas import (
     ConsumableOut, ConsumableCreate, ConsumableUpdate, ReceiveRequest, UseRequest, ImportRequest,
 )
-from .units import TWO, to_base, receive_amount, apply_receive, reconfigure
+from inventory.units import TWO, to_base, receive_amount, apply_receive, reconfigure
 
 router = APIRouter(prefix="/inventory", tags=["inventory"])
 
