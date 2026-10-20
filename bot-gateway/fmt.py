@@ -11,9 +11,14 @@ def fmt_stock(c: dict) -> str:
 
 
 def fmt_config(c: dict) -> str:
-    """'Учёт: г, в пачке 1015 г (нетто), порог: 1 пач.'"""
+    """'Учёт: г, в пачке 1015 г (нетто), тара 60 г, порог: 1 пач.'"""
     if c.get("pack_size"):
         pack = f"в пачке {num(c['pack_size'])} {c['unit']} (нетто)"
+        if c["unit"] == "г":
+            if c.get("tare") is not None:
+                pack += f", тара {num(c['tare'])} г"
+            else:
+                pack += ", тара не задана"
         word = "пач."
     else:
         pack = "считается в штуках"

@@ -1,5 +1,6 @@
 import httpx
 from aiogram import Bot, Router, types, F
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 
@@ -27,11 +28,23 @@ async def send_lines(message: types.Message, header: str, lines: list[str]):
         await message.answer(chunk)
 
 
-def receive_prompt(c: dict) -> str:
+def receive_prompt(c: dict, mode: str = "pieces") -> str:
     text = f"«{c['name']}»\nСейчас: {fmt_stock(c)}"
     if c.get("pack_size"):
         text += f"\nВ пачке: {num(c['pack_size'])} {c['unit']} (нетто)"
-    return text + "\nСколько пачек (штук) пришло?"
+        if c["unit"] == "г":
+            if c.get("tare") is not None:
+                text += f"\nТара: {num(c['tare'])} г"
+            else:
+                text += "\nТара не задана (её задаёт администратор в «✏️ Расходник»)"
+
+    if mode == "base":
+        text += f"\n\nСколько {c['unit']} содержимого добавить?"
+    elif mode == "gross" and c.get("tare") is not None:
+        text += f"\n\nВес на весах вместе с упаковкой, г? (тара {num(c['tare'])} г вычтется)"
+    else:
+        text += "\n\nСколько пачек (штук) пришло?"
+    return text
 
 
 # ---------------- Остатки ----------------
@@ -95,11 +108,11 @@ async def create_and_continue(message: types.Message, state: FSMContext, backend
         return
 
     consumable = resp.json()
-    await state.update_data(consumable_id=consumable["id"])
-    await state.set_state(ReceiveStates.entering_pieces)
+    await state.update_data(consumable_id=consumable["id"], rcv_mode="pieces")
+    await state.set_state(ReceiveStates.entering_amount)
     await message.answer(
-        f"«{name}» добавлен.\nСколько пачек (штук) пришло?",
-        reply_markup=receive_keyboard(unit if pack_size else None),
+        f"«{name}» добавлен.\n\n" + receive_prompt(consumable, "pieces"),
+        reply_markup=receive_keyboard(consumable, "pieces"),
     )
 
 
@@ -142,26 +155,46 @@ async def receive_choose(callback: types.CallbackQuery, state: FSMContext, backe
         return
 
     await close_list(callback, f"Выбрано: «{consumable['name']}»")
-    await state.update_data(consumable_id=consumable_id)
-    await state.set_state(ReceiveStates.entering_pieces)
+    await state.update_data(consumable_id=consumable_id, rcv_mode="pieces")
+    await state.set_state(ReceiveStates.entering_amount)
     await callback.message.answer(
-        receive_prompt(consumable),
-        reply_markup=receive_keyboard(consumable["unit"] if consumable.get("pack_size") else None),
+        receive_prompt(consumable, "pieces"),
+        reply_markup=receive_keyboard(consumable, "pieces"),
     )
     await callback.answer()
 
 
-@router.callback_query(F.data == "rcv:net", ReceiveStates.entering_pieces)
+@router.callback_query(F.data.startswith("rmode:"), ReceiveStates.entering_amount)
+async def receive_mode_chosen(callback: types.CallbackQuery, state: FSMContext, backend_url: str):
+    mode = callback.data.split(":")[1]
+    data = await state.get_data()
+    c = await find_consumable(backend_url, data["consumable_id"])
+    if c is None:
+        await callback.answer("Расходник не найден", show_alert=True)
+        return
+    if mode == "gross" and (c["unit"] != "г" or c.get("tare") is None):
+        await callback.answer("Тара не задана", show_alert=True)
+        return
+
+    await state.update_data(rcv_mode=mode)
+    try:
+        await callback.message.edit_text(receive_prompt(c, mode), reply_markup=receive_keyboard(c, mode))
+    except TelegramBadRequest:
+        pass
+    await callback.answer()
+
+
+@router.callback_query(F.data == "rcv:net", ReceiveStates.entering_amount)
 async def receive_net_edit(callback: types.CallbackQuery, state: FSMContext, backend_url: str):
     data = await state.get_data()
-    consumable = await find_consumable(backend_url, data["consumable_id"])
-    if consumable is None or not consumable.get("pack_size"):
+    c = await find_consumable(backend_url, data["consumable_id"])
+    if c is None or not c.get("pack_size"):
         await callback.answer("Нетто задаётся только для позиций в мл или г", show_alert=True)
         return
 
     await state.set_state(ReceiveStates.entering_new_net)
     await callback.message.answer(
-        f"Новый вес нетто одной пачки, {consumable['unit']}? (сейчас {num(consumable['pack_size'])})",
+        f"Новый вес нетто одной пачки, {c['unit']}? (сейчас {num(c['pack_size'])})",
         reply_markup=cancel_keyboard(),
     )
     await callback.answer()
@@ -180,27 +213,37 @@ async def receive_net_entered(message: types.Message, state: FSMContext, backend
         await message.answer("Не удалось сохранить. Попробуй ещё раз.")
         return
 
-    await state.set_state(ReceiveStates.entering_pieces)
+    mode = data.get("rcv_mode", "pieces")
+    await state.set_state(ReceiveStates.entering_amount)
     await message.answer(
-        "Нетто обновлено.\n" + receive_prompt(updated),
-        reply_markup=receive_keyboard(updated["unit"]),
+        "Нетто обновлено.\n\n" + receive_prompt(updated, mode),
+        reply_markup=receive_keyboard(updated, mode),
     )
 
 
-@router.message(ReceiveStates.entering_pieces)
-async def receive_pieces_entered(message: types.Message, state: FSMContext, backend_url: str):
-    pieces = parse_number(message.text)
-    if pieces is None:
+@router.message(ReceiveStates.entering_amount)
+async def receive_amount_entered(message: types.Message, state: FSMContext, backend_url: str):
+    amount = parse_number(message.text)
+    if amount is None:
         await message.answer("Введи число больше нуля, например: 2")
         return
 
     data = await state.get_data()
+    mode = data.get("rcv_mode", "pieces")
     async with httpx.AsyncClient() as client:
         resp = await client.post(f"{backend_url}/inventory/receive", json={
             "consumable_id": data["consumable_id"],
-            "pieces": pieces,
+            "amount": amount,
+            "mode": mode,
             "telegram_id": message.from_user.id,
         })
+
+    if resp.status_code == 400:
+        await message.answer(
+            "Не получилось принять такое значение (вес с упаковкой должен быть больше тары). "
+            "Введи число ещё раз."
+        )
+        return
 
     await state.clear()
     if resp.status_code != 200:
@@ -208,7 +251,10 @@ async def receive_pieces_entered(message: types.Message, state: FSMContext, back
         return
 
     result = resp.json()
-    await message.answer(f"Приход зафиксирован ✅\n«{result['name']}»: теперь {fmt_stock(result)}")
+    text = f"Приход зафиксирован ✅\n«{result['name']}»: теперь {fmt_stock(result)}"
+    if mode != "pieces":
+        text += f"\nДобавлено: {num(result['added'])} {result['unit']}"
+    await message.answer(text)
 
 
 # ---------------- Списание ----------------

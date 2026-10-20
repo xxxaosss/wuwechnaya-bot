@@ -6,7 +6,7 @@ class ReceiveStates(StatesGroup):
     entering_new_name = State()
     choosing_new_kind = State()
     entering_pack_size = State()
-    entering_pieces = State()
+    entering_amount = State()
     entering_new_net = State()
 
 
@@ -38,3 +38,5 @@ class EditStates(StatesGroup):
     entering_net = State()
     entering_kind_pack = State()
     entering_threshold = State()
+    entering_tare = State()
+    entering_full_weight = State()

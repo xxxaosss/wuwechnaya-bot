@@ -3,7 +3,7 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 
 from states import EditStates
-from keyboards import cancel_keyboard, edit_menu_keyboard, UNIT_BY_KIND
+from keyboards import cancel_keyboard, edit_menu_keyboard, tare_keyboard, UNIT_BY_KIND
 from auth_helper import require_admin
 from api import find_consumable, update_consumable
 from picker import start_picker, close_list
@@ -121,6 +121,83 @@ async def edit_net_entered(message: types.Message, state: FSMContext, bot: Bot, 
     if await update_consumable(backend_url, data["edit_id"], pack_size=net) is None:
         await message.answer("Не удалось сохранить.")
         return
+    await show_menu(bot, message.chat.id, state, backend_url)
+
+
+# ---- тара ----
+
+@router.callback_query(F.data == "ecfg:tare", EditStates.menu)
+async def edit_tare(callback: types.CallbackQuery, state: FSMContext, backend_url: str):
+    data = await state.get_data()
+    c = await find_consumable(backend_url, data["edit_id"])
+    if c is None or c["unit"] != "г" or not c.get("pack_size"):
+        await callback.answer("Тара задаётся только для позиций в граммах", show_alert=True)
+        return
+
+    current = f"сейчас {num(c['tare'])} г" if c.get("tare") is not None else "пока не задана"
+    await state.set_state(EditStates.entering_tare)
+    await callback.message.answer(
+        f"Вес пустой упаковки, г? ({current})\n"
+        "Если пустой упаковки нет под рукой, нажми «Взвесил целую пачку».",
+        reply_markup=tare_keyboard(),
+    )
+    await callback.answer()
+
+
+@router.message(EditStates.entering_tare)
+async def edit_tare_entered(message: types.Message, state: FSMContext, bot: Bot, backend_url: str):
+    tare = parse_number(message.text, allow_zero=True)
+    if tare is None:
+        await message.answer("Введи число, например: 60")
+        return
+    data = await state.get_data()
+    if await update_consumable(backend_url, data["edit_id"], tare=tare) is None:
+        await message.answer("Не удалось сохранить.")
+        return
+    await show_menu(bot, message.chat.id, state, backend_url)
+
+
+@router.callback_query(F.data == "etare:full", EditStates.entering_tare)
+async def edit_tare_full(callback: types.CallbackQuery, state: FSMContext, backend_url: str):
+    data = await state.get_data()
+    c = await find_consumable(backend_url, data["edit_id"])
+    if c is None or not c.get("pack_size"):
+        await callback.answer("Расходник не найден", show_alert=True)
+        return
+    await state.set_state(EditStates.entering_full_weight)
+    await callback.message.answer(
+        f"Вес целой нераспечатанной пачки на весах, г?\n"
+        f"Нетто {num(c['pack_size'])} г вычтется, остальное станет тарой.",
+        reply_markup=cancel_keyboard(),
+    )
+    await callback.answer()
+
+
+@router.message(EditStates.entering_full_weight)
+async def edit_full_weight_entered(message: types.Message, state: FSMContext, bot: Bot, backend_url: str):
+    gross = parse_number(message.text)
+    if gross is None:
+        await message.answer("Введи число больше нуля, например: 1075")
+        return
+
+    data = await state.get_data()
+    c = await find_consumable(backend_url, data["edit_id"])
+    if c is None or not c.get("pack_size"):
+        await message.answer("Расходник не найден.")
+        await state.clear()
+        return
+
+    tare = round(gross - c["pack_size"], 2)
+    if tare < 0:
+        await message.answer(
+            f"Целая пачка не может весить меньше нетто ({num(c['pack_size'])} г). Введи вес ещё раз."
+        )
+        return
+
+    if await update_consumable(backend_url, data["edit_id"], tare=tare) is None:
+        await message.answer("Не удалось сохранить.")
+        return
+    await message.answer(f"Тара = {num(gross)} − {num(c['pack_size'])} = {num(tare)} г")
     await show_menu(bot, message.chat.id, state, backend_url)
 
 

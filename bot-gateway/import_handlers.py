@@ -14,15 +14,16 @@ router = Router()
 
 HELP = (
     "Пришли CSV-файл (разделитель «;», кодировка UTF-8) в таком формате:\n\n"
-    "Название;Штук;Объём;Ед;Вес, г\n"
-    "Шампунь 1000 мл;2;1000;мл;\n"
-    "Краска 60 мл;3;60;мл;62\n"
-    "Перчатки;10;;;\n\n"
-    "• Название и Штук — обязательные (Штук можно 0, чтобы только завести позицию)\n"
+    "Название;Штук;Объём;Ед;Вес, г;Тара, г\n"
+    "Шампунь 1000 мл;2;1000;мл;;\n"
+    "Краска 60 мл;3;60;мл;62;8\n"
+    "Перчатки;10;;;;\n\n"
+    "• Название и Штук — обязательные (Штук можно 0, чтобы только завести или настроить позицию)\n"
     "• Объём — сколько мл/г в одной пачке (пусто — учёт только в штуках)\n"
     "• Ед — мл или г\n"
     "• Вес, г — нетто одной пачки. Если указан, позиция считается в граммах по этому весу, "
-    "а у уже существующей позиции учёт переключится на граммы (число пачек сохранится)\n"
+    "а у существующей позиции учёт переключится на граммы (число пачек сохранится)\n"
+    "• Тара, г — вес пустой упаковки (только для позиций в граммах)\n"
     "• Позиции ищутся по названию: если такая уже есть, пачки добавятся к остатку"
 )
 
@@ -32,6 +33,7 @@ ALIASES = {
     "volume": {"volume", "объем", "объём", "pack_size"},
     "unit": {"unit", "ед", "ед.", "единица"},
     "weight": {"weight", "вес, г", "вес,г", "вес г", "вес", "нетто", "нетто, г"},
+    "tare": {"tare", "тара", "тара, г", "тара,г", "тара г", "вес тары"},
 }
 
 
@@ -96,6 +98,12 @@ def parse_csv(raw: bytes):
             errors.append(f"строка {i}: «Вес, г» должен быть числом больше нуля")
             continue
 
+        raw_tare = row.get("tare", "")
+        tare = to_float(raw_tare)
+        if raw_tare and (tare is None or tare < 0):
+            errors.append(f"строка {i}: «Тара, г» должна быть числом (0 или больше)")
+            continue
+
         has_volume = bool(volume) and unit != "шт"
         lines.append({
             "name": name,
@@ -103,6 +111,7 @@ def parse_csv(raw: bytes):
             "volume": volume if has_volume else None,
             "unit": (unit or "мл") if has_volume else None,
             "weight": weight,
+            "tare": tare,
         })
 
     if not lines and not errors:
@@ -115,6 +124,15 @@ def will_convert(line: dict, ex: dict | None) -> bool:
                 and (ex["unit"] != "г" or (ex.get("pack_size") or None) != line["weight"]))
 
 
+def target_unit(line: dict, ex: dict | None) -> str:
+    """В чём позиция будет считаться после загрузки."""
+    if line.get("weight"):
+        return "г"
+    if ex:
+        return ex["unit"]
+    return line["unit"] or "шт"
+
+
 def preview(lines: list[dict], existing: dict) -> str:
     out = []
     for l in lines[:15]:
@@ -125,25 +143,33 @@ def preview(lines: list[dict], existing: dict) -> str:
             spec = f" × {num(l['volume'])} {l['unit']}"
         else:
             spec = ""
+
+        notes = []
+        if l.get("tare") is not None:
+            if target_unit(l, ex) == "г":
+                spec += f", тара {num(l['tare'])} г"
+            else:
+                notes.append("⚠️ тара пропущена: учёт не в граммах")
+
         head = f"• {l['name']}: +{num(l['pieces'])} шт{spec}"
         if ex is None:
-            out.append(head + " — новая позиция")
+            out.append(head + " — новая позиция" + ("".join(f" {n}" for n in notes)))
             continue
 
         pieces_after = ex["pieces"] + l["pieces"]
         if l.get("weight"):
             unit_after, pack_after = "г", l["weight"]
-            note = " ⚙️ учёт станет: г" if will_convert(l, ex) else ""
+            if will_convert(l, ex):
+                notes.append("⚙️ учёт станет: г")
         else:
             unit_after, pack_after = ex["unit"], ex.get("pack_size")
-            note = ""
             if (ex.get("pack_size") or None) != (l["volume"] or None):
-                note = " ⚠️ объём упаковки отличается от базы, возьмётся из базы"
+                notes.append("⚠️ объём упаковки отличается от базы, возьмётся из базы")
         after = {
             "unit": unit_after, "pack_size": pack_after, "pieces": pieces_after,
             "quantity": pieces_after * (pack_after or 1),
         }
-        out.append(f"{head} — было {fmt_stock(ex)}, станет {fmt_stock(after)}{note}")
+        out.append(f"{head} — было {fmt_stock(ex)}, станет {fmt_stock(after)}" + "".join(f" {n}" for n in notes))
     if len(lines) > 15:
         out.append(f"… и ещё {len(lines) - 15}")
     return "\n".join(out)
@@ -216,4 +242,8 @@ async def import_confirm(callback: types.CallbackQuery, state: FSMContext, backe
     )
     if result.get("converted"):
         text += f"\nПереведено на граммы: {result['converted']}"
+    if result.get("tare_set"):
+        text += f"\nТара задана: {result['tare_set']}"
+    if result.get("tare_skipped"):
+        text += f"\nТара пропущена (учёт не в граммах): {result['tare_skipped']}"
     await callback.message.answer(text)

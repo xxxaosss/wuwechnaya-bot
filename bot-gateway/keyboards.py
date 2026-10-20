@@ -57,13 +57,29 @@ def kind_keyboard() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def receive_keyboard(unit: str | None = None) -> InlineKeyboardMarkup:
-    """Для прихода: кнопка изменения нетто показывается только у позиций в мл/г."""
+def receive_keyboard(c: dict | None = None, mode: str = "pieces") -> InlineKeyboardMarkup:
+    """Для прихода: переключатель способа ввода и кнопка изменения нетто (для позиций в мл/г)."""
     builder = InlineKeyboardBuilder()
-    if unit:
-        builder.button(text=f"⚖️ Изменить нетто ({unit})", callback_data="rcv:net")
+    sizes = []
+    if c and c.get("pack_size"):
+        unit = c["unit"]
+        row = 0
+        if mode != "pieces":
+            builder.button(text="📦 В пачках", callback_data="rmode:pieces")
+            row += 1
+        if mode != "base":
+            builder.button(text=f"⚖️ В {unit}", callback_data="rmode:base")
+            row += 1
+        if unit == "г" and c.get("tare") is not None and mode != "gross":
+            builder.button(text="🧴 Вес с упаковкой", callback_data="rmode:gross")
+            row += 1
+        if row:
+            sizes.append(row)
+        builder.button(text=f"✏️ Изменить нетто ({unit})", callback_data="rcv:net")
+        sizes.append(1)
     builder.button(text="❌ Отмена", callback_data="cancel")
-    builder.adjust(1)
+    sizes.append(1)
+    builder.adjust(*sizes)
     return builder.as_markup()
 
 
@@ -72,11 +88,30 @@ def edit_menu_keyboard(c: dict) -> InlineKeyboardMarkup:
     for kind, unit in UNIT_BY_KIND.items():
         mark = "✅ " if c["unit"] == unit else ""
         builder.button(text=f"{mark}Учёт: {unit}", callback_data=f"ekind:{kind}")
+    sizes = [3]
+
+    row = 0
     if c.get("pack_size"):
-        builder.button(text="⚖️ Нетто пачки", callback_data="ecfg:net")
+        builder.button(text="⚖️ Нетто", callback_data="ecfg:net")
+        row += 1
+    if c["unit"] == "г" and c.get("pack_size"):
+        builder.button(text="🧴 Тара", callback_data="ecfg:tare")
+        row += 1
     builder.button(text="🔔 Порог", callback_data="ecfg:thr")
+    row += 1
+    sizes.append(row)
+
     builder.button(text="✔️ Готово", callback_data="ecfg:done")
-    builder.adjust(3, 2, 1)
+    sizes.append(1)
+    builder.adjust(*sizes)
+    return builder.as_markup()
+
+
+def tare_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🧴 Взвесил целую пачку", callback_data="etare:full")
+    builder.button(text="❌ Отмена", callback_data="cancel")
+    builder.adjust(1)
     return builder.as_markup()
 
 

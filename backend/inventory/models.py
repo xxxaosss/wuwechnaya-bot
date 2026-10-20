@@ -13,6 +13,7 @@ class Consumable(Base):
     quantity = Column(Numeric(10, 2), nullable=False, default=0)   # остаток в базовых единицах
     pack_size = Column(Numeric(10, 2), nullable=True)              # нетто одной пачки в мл/г (NULL — только штуки)
     threshold = Column(Numeric(10, 2), nullable=False, default=0)  # порог в базовых единицах
+    tare = Column(Numeric(10, 2), nullable=True)                   # вес пустой упаковки, г (только для учёта в г)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     @property
@@ -37,7 +38,7 @@ class ConsumableIncoming(Base):
     id = Column(Integer, primary_key=True)
     consumable_id = Column(Integer, ForeignKey("inventory.consumables.id"), nullable=False)
     quantity = Column(Numeric(10, 2), nullable=False)   # в базовых единицах
-    pieces = Column(Numeric(10, 2))                     # пачек по приходу
+    pieces = Column(Numeric(10, 2))                     # в пачках
     created_by = Column(BigInteger, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 

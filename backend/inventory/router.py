@@ -7,11 +7,9 @@ from .models import Consumable, ConsumableIncoming, ConsumableUsage
 from .schemas import (
     ConsumableOut, ConsumableCreate, ConsumableUpdate, ReceiveRequest, UseRequest, ImportRequest,
 )
-from .units import to_base, apply_receive, reconfigure
+from .units import TWO, to_base, receive_amount, apply_receive, reconfigure
 
 router = APIRouter(prefix="/inventory", tags=["inventory"])
-
-TWO = Decimal("0.01")
 
 
 def D(value) -> Decimal:
@@ -57,7 +55,7 @@ async def create_consumable(data: ConsumableCreate, session: AsyncSession = Depe
 @router.patch("/consumables/{consumable_id}", response_model=ConsumableOut)
 async def update_consumable(consumable_id: int, data: ConsumableUpdate,
                             session: AsyncSession = Depends(get_session)):
-    """Меняет способ учёта / нетто пачки / порог. Число пачек сохраняется."""
+    """Меняет способ учёта / нетто пачки / тару / порог. Число пачек сохраняется."""
     c = await session.get(Consumable, consumable_id)
     if not c:
         raise HTTPException(404, "Consumable not found")
@@ -77,6 +75,11 @@ async def update_consumable(consumable_id: int, data: ConsumableUpdate,
                 raise HTTPException(400, "pack_size is required for мл/г")
         reconfigure(c, unit, pack)
 
+    if data.tare is not None:
+        if c.unit != "г" or not c.pack_size:
+            raise HTTPException(400, "tare is only for positions counted in г")
+        c.tare = D(data.tare)
+
     if data.threshold_packs is not None:
         c.threshold = (D(data.threshold_packs) * (c.pack_size or Decimal(1))).quantize(TWO)
 
@@ -86,17 +89,21 @@ async def update_consumable(consumable_id: int, data: ConsumableUpdate,
 
 @router.post("/receive")
 async def receive(data: ReceiveRequest, session: AsyncSession = Depends(get_session)):
-    consumable = await session.get(Consumable, data.consumable_id)
-    if not consumable:
+    c = await session.get(Consumable, data.consumable_id)
+    if not c:
         raise HTTPException(404, "Consumable not found")
 
-    pieces = D(data.pieces)
-    added = apply_receive(consumable, pieces)
+    try:
+        added = receive_amount(c, D(data.amount), data.mode)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    pieces = (added / (c.pack_size or Decimal(1))).quantize(TWO)
     session.add(ConsumableIncoming(
-        consumable_id=consumable.id, quantity=added, pieces=pieces, created_by=data.telegram_id,
+        consumable_id=c.id, quantity=added, pieces=pieces, created_by=data.telegram_id,
     ))
     await session.commit()
-    return {"status": "ok", **stock_info(consumable)}
+    return {"status": "ok", "added": float(added), **stock_info(c)}
 
 
 @router.post("/use")
@@ -119,9 +126,9 @@ async def use(data: UseRequest, session: AsyncSession = Depends(get_session)):
 async def import_lines(data: ImportRequest, session: AsyncSession = Depends(get_session)):
     """Загрузка списка: позиции ищутся по названию (без учёта регистра), новые создаются.
     Если указан weight — позиция считается в граммах по нетто одной пачки (у существующей
-    позиции учёт переключается, число пачек сохраняется)."""
+    позиции учёт переключается, число пачек сохраняется). tare применяется только к позициям в граммах."""
     existing = {c.name.strip().lower(): c for c in (await session.scalars(select(Consumable))).all()}
-    created = updated = converted = 0
+    created = updated = converted = tare_set = tare_skipped = 0
 
     for line in data.lines:
         name = line.name.strip()
@@ -149,6 +156,13 @@ async def import_lines(data: ImportRequest, session: AsyncSession = Depends(get_
                 converted += 1
             updated += 1
 
+        if line.tare is not None:
+            if consumable.unit == "г" and consumable.pack_size:
+                consumable.tare = D(line.tare)
+                tare_set += 1
+            else:
+                tare_skipped += 1
+
         pieces = D(line.pieces)
         if pieces > 0:  # 0 пачек — только завести/настроить позицию, без записи прихода
             added = apply_receive(consumable, pieces)
@@ -157,4 +171,7 @@ async def import_lines(data: ImportRequest, session: AsyncSession = Depends(get_
             ))
 
     await session.commit()
-    return {"created": created, "updated": updated, "converted": converted}
+    return {
+        "created": created, "updated": updated, "converted": converted,
+        "tare_set": tare_set, "tare_skipped": tare_skipped,
+    }
