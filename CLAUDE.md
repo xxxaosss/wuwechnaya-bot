@@ -30,12 +30,14 @@ Backend: FastAPI, SQLAlchemy async + asyncpg, Pydantic v2. Бот: aiogram 3, ht
 
 ## Правила кода
 - Количества в backend — `Decimal(str(x))`. Float с Decimal не складывать (это уже ломало прод).
-- Пересчёт штуки/мл/г, приход и списание — только через `backend/inventory/units.py`.
+- Пересчёт штуки/мл/г и приход — только через `backend/inventory/units.py` (`to_base`, `receive_amount`, `reconfigure`).
+  Списание (`quantity -= qty`) пишется в роутерах `/inventory/use` и `/worklog/complete`, но qty считается через `to_base`.
 - Импорты в backend абсолютные (`from db import get_session`), относительные не использовать.
 - Инструмента миграций нет, SQL выполняется вручную: `kubectl run pg-migrate ... psql "$DSN"`,
   DSN берётся из секрета `db-secrets` (убрать `+asyncpg`).
   Порядок: сначала миграция (добавляет nullable/default-колонки), потом деплой; удаление колонок после деплоя.
-- Бот: числа вводятся только через `fmt.parse_number`; `callback_data` до 64 байт;
+- Бот: числа, введённые пользователем в чате, — только через `fmt.parse_number`
+  (исключение: ячейки файла импорта разбирает `to_float` в `import_handlers.py`); `callback_data` до 64 байт;
   лимиты Telegram: 100 кнопок на клавиатуру, 4096 символов в сообщении.
 - Бот: порядок роутеров в `app.py` важен. `picker_router` подключается последним
   (он перехватывает любой текст в состояниях выбора), `edit_router` перед ним.
