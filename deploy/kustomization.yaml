@@ -6,6 +6,6 @@ resources:
 # Теги обновляет GitHub Actions после сборки образа (коммит "deploy: ...")
 images:
   - name: ghcr.io/xxxaosss/backend
-    newTag: latest
+    newTag: "9d44ac8a7d4fe2fbdf8976aca51ad2f29c68e8ef"
   - name: ghcr.io/xxxaosss/bot-gateway
     newTag: latest
