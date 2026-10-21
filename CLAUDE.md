@@ -52,13 +52,18 @@ cd bot-gateway && BOT_TOKEN=123456:TEST ADMIN_TELEGRAM_ID=1 python -c "import ap
 ```
 Тестов пока нет. Для новой логики писать pytest, начиная с чистых функций.
 
-## Деплой
-1. `git push`, GitHub Actions собирает образ (на push — только при изменениях в `backend/**` или `bot-gateway/**`; вручную — `workflow_dispatch`), ждать зелёной галочки.
-2. `kubectl rollout restart deployment backend`, затем `deployment bot-gateway`.
-3. Проверка: `kubectl get pods`, `kubectl logs -l app=bot-gateway --tail=30`.
+## Деплой (Argo CD, автоматический)
+1. Миграции БД (если есть) применить ДО пуша: деплой теперь идёт сам.
+2. `git push`. GitHub Actions собирает образ (на push — только при изменениях в `backend/**` или `bot-gateway/**`;
+   вручную — `workflow_dispatch`) с тегами `:latest` и `:<git sha>` и коммитит новый sha в `deploy/kustomization.yaml`
+   (коммит `deploy: <сервис> <sha>`, перед следующей работой делать `git pull`).
+3. Argo CD (Application `wuwechnaya-bot`, манифест `argocd/wuwechnaya-bot.yaml`) следит за `deploy/` ветки `main`
+   и выкатывает сам (`automated`, `selfHeal`, `prune: false`).
+4. Проверка: `kubectl get pods`, `kubectl logs -l app=bot-gateway --tail=30`, `kubectl -n argocd get applications`.
 
-Сервисы сейчас в namespace `default`. Argo CD на Pi установлен, перенос сервисов в него не сделан.
-Тег `:latest`. `imagePullPolicy: Always` явно задан только у bot-gateway, у backend он Always по умолчанию из-за `:latest`.
+Ручной `rollout restart` больше не нужен; образы в кластере берутся по sha, а не `:latest`.
+У bot-gateway `strategy: Recreate` (иначе два бота разом дают 409). Секреты в git не лежат и Argo их не ведёт.
+Сервисы в namespace `default`. `imagePullPolicy: Always` явно задан только у bot-gateway.
 
 ## Секреты (не печатать, не коммитить, `.env` не читать)
 k8s Secrets: `bot-secrets` (BOT_TOKEN, ADMIN_TELEGRAM_ID), `db-secrets` (DATABASE_URL), `ghcr-secret`.

@@ -1,0 +1,11 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - backend.yaml
+  - bot-gateway.yaml
+# Теги обновляет GitHub Actions после сборки образа (коммит "deploy: ...")
+images:
+  - name: ghcr.io/xxxaosss/backend
+    newTag: latest
+  - name: ghcr.io/xxxaosss/bot-gateway
+    newTag: latest

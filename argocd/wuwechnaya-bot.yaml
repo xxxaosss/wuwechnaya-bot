@@ -1,0 +1,19 @@
+# Применяется вручную один раз: kubectl apply -f argocd/wuwechnaya-bot.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: wuwechnaya-bot
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: git@github.com:xxxaosss/wuwechnaya-bot.git
+    targetRevision: main
+    path: deploy
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: default
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true

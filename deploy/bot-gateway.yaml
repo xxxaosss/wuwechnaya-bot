@@ -4,6 +4,8 @@ metadata:
   name: bot-gateway
 spec:
   replicas: 1
+  strategy:
+    type: Recreate  # два экземпляра бота дают TelegramConflictError 409
   selector:
     matchLabels:
       app: bot-gateway
