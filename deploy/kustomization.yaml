@@ -8,4 +8,4 @@ images:
   - name: ghcr.io/xxxaosss/backend
     newTag: "9d44ac8a7d4fe2fbdf8976aca51ad2f29c68e8ef"
   - name: ghcr.io/xxxaosss/bot-gateway
-    newTag: latest
+    newTag: "dcc8f0e6665d35a161f2ea2dc5f058f2ebfd4aa2"
