@@ -47,6 +47,14 @@ def cancel_keyboard() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+def stock_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="📋 Показать все", callback_data="stock:all")
+    builder.button(text="❌ Отмена", callback_data="cancel")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
 def kind_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="📦 Только штуки", callback_data="kind:pieces")

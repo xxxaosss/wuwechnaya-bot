@@ -4,28 +4,17 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 
-from states import ReceiveStates, UseStates
-from keyboards import cancel_keyboard, kind_keyboard, mode_keyboard, receive_keyboard
+from states import ReceiveStates, UseStates, StockStates
+from keyboards import stock_keyboard, cancel_keyboard, kind_keyboard, mode_keyboard, receive_keyboard
 from auth_helper import require_staff
 from api import fetch_consumables, find_consumable, update_consumable
 from picker import start_picker, close_list
 from fmt import fmt_stock, num, parse_number
+from stock_view import send_lines, stock_lines
 
 router = Router()
 
 NO_ACCESS = "Доступ только для мастеров и администраторов."
-
-
-async def send_lines(message: types.Message, header: str, lines: list[str]):
-    """Отправляет длинный список частями (лимит Telegram — 4096 символов)."""
-    chunk = header
-    for line in lines:
-        if len(chunk) + len(line) + 1 > 3800:
-            await message.answer(chunk)
-            chunk = ""
-        chunk += ("\n" if chunk else "") + line
-    if chunk:
-        await message.answer(chunk)
 
 
 def receive_prompt(c: dict, mode: str = "pieces") -> str:
@@ -51,7 +40,7 @@ def receive_prompt(c: dict, mode: str = "pieces") -> str:
 
 @router.message(F.text == "📦 Остатки")
 @router.message(Command("stock"))
-async def stock_handler(message: types.Message, backend_url: str):
+async def stock_handler(message: types.Message, state: FSMContext, backend_url: str):
     if not await require_staff(backend_url, message.from_user.id):
         await message.answer(NO_ACCESS)
         return
@@ -61,11 +50,25 @@ async def stock_handler(message: types.Message, backend_url: str):
         await message.answer("Расходников пока нет. Добавь через «➕ Приход».")
         return
 
-    lines = []
-    for c in consumables:
-        flag = " ⚠️ заканчивается" if c["quantity"] <= c["threshold"] else ""
-        lines.append(f"• {c['name']}: {fmt_stock(c)}{flag}")
-    await send_lines(message, "Текущие остатки:", lines)
+    await state.clear()
+    await state.set_state(StockStates.waiting_query)
+    await message.answer(
+        f"Всего позиций: {len(consumables)}. Напиши часть названия, чтобы найти нужную, "
+        "или покажи весь список.",
+        reply_markup=stock_keyboard(),
+    )
+
+
+@router.callback_query(F.data == "stock:all", StockStates.waiting_query)
+async def stock_all(callback: types.CallbackQuery, state: FSMContext, backend_url: str):
+    await callback.answer()
+    consumables = await fetch_consumables(backend_url)
+    await state.clear()
+    try:
+        await callback.message.edit_text("Все остатки ниже ⬇️")
+    except TelegramBadRequest:
+        pass
+    await send_lines(callback.message, "Текущие остатки:", stock_lines(consumables))
 
 
 # ---------------- Приход ----------------

@@ -11,7 +11,8 @@ from aiogram.fsm.context import FSMContext
 from api import fetch_consumables
 from keyboards import pick_keyboard
 from search import filter_consumables, paginate
-from states import ReceiveStates, UseStates, WorkLogStates, EditStates
+from states import ReceiveStates, UseStates, WorkLogStates, EditStates, StockStates
+from stock_view import send_lines, stock_lines
 
 router = Router()
 
@@ -126,3 +127,15 @@ async def pick_search(message: types.Message, state: FSMContext, bot: Bot, backe
         await message.delete()
     except TelegramBadRequest:
         pass
+
+
+@router.message(StockStates.waiting_query, F.text, ~F.text.startswith("/"))
+async def stock_search(message: types.Message, state: FSMContext, backend_url: str):
+    """Поиск по «📦 Остатки»: показывает найденные позиции, состояние остаётся для нового запроса."""
+    query = message.text.strip()
+    consumables = await fetch_consumables(backend_url)
+    found = filter_consumables(consumables, query)
+    if not found:
+        await message.answer(f"По запросу «{query}» ничего не найдено. Попробуй другие слова.")
+        return
+    await send_lines(message, f"🔎 «{query}»: найдено {len(found)} из {len(consumables)}", stock_lines(found))

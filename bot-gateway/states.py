@@ -40,3 +40,7 @@ class EditStates(StatesGroup):
     entering_threshold = State()
     entering_tare = State()
     entering_full_weight = State()
+
+
+class StockStates(StatesGroup):
+    waiting_query = State()
